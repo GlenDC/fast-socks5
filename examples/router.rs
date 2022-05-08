@@ -2,18 +2,18 @@
 #[macro_use]
 extern crate log;
 
+use anyhow::{anyhow, Context};
 use fast_socks5::{
-    server::{Config, SimpleUserPassword, Socks5Server, Socks5Socket},
     client::{self, Socks5Stream},
+    server::{Config, SimpleUserPassword, Socks5Server, Socks5Socket},
     Result, SocksError,
 };
-use anyhow::{anyhow, Context};
+use std::io::ErrorKind;
+use std::net::ToSocketAddrs;
 use structopt::StructOpt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task;
 use tokio_stream::StreamExt;
-use std::net::ToSocketAddrs;
-use std::io::ErrorKind;
 
 /// # How to use it:
 ///
@@ -82,6 +82,8 @@ async fn spawn_socks_server() -> Result<()> {
     let mut config = Config::default();
     config.set_request_timeout(opt.request_timeout);
     config.set_skip_auth(opt.skip_auth);
+    config.set_dns_resolve(false);
+    config.set_transfer_data(false);
 
     match opt.auth {
         AuthMode::NoAuth => warn!("No authentication has been set!"),
@@ -102,7 +104,10 @@ async fn spawn_socks_server() -> Result<()> {
 
     let mut incoming = listener.incoming();
 
-    info!("Listen for socks connections @ {}, using proxy @ {}", &opt.listen_addr, &opt.proxy_addr);
+    info!(
+        "Listen for socks connections @ {}, using proxy @ {}",
+        &opt.listen_addr, &opt.proxy_addr
+    );
 
     // Standard TCP loop
     while let Some(socket_res) = incoming.next().await {
@@ -134,14 +139,30 @@ where
         .await
         .context("upgrade incoming socket to socks5")?;
 
-    // get resolved target addr
+    let unresolved_target_addr = socks5_socket
+        .target_addr()
+        .context("find unresolved target address for incoming socket")?;
+    debug!(
+        "incoming request for target address: {}",
+        unresolved_target_addr
+    );
+
+    // resolve dns
     socks5_socket
         .resolve_dns()
         .await
         .context("resolve target dns for incoming socket")?;
-    let socket_addr = socks5_socket
+
+    // get actual socket address
+    let target_addr = socks5_socket
         .target_addr()
-        .context("find target address for incoming socket")?
+        .context("find target address for incoming socket")?;
+    debug!(
+        "incoming request resolved target address to: {}",
+        target_addr
+    );
+
+    let socket_addr = target_addr
         .to_socket_addrs()
         .context("convert target address of incoming socket to socket addresses")?
         .next()
@@ -167,15 +188,15 @@ where
             ErrorKind::NotConnected => {
                 info!("socket transfer closed by client");
                 Ok(())
-            },
+            }
             ErrorKind::ConnectionReset => {
                 info!("socket transfer closed by downstream proxy");
                 Ok(())
-            },
+            }
             _ => Err(SocksError::Other(anyhow!(
                 "socket transfer error: {:#}",
                 err
-            )))
+            ))),
         },
     }
 }
