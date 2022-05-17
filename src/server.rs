@@ -194,6 +194,7 @@ pub struct Socks5Socket<T: AsyncRead + AsyncWrite + Unpin> {
     config: Arc<Config>,
     auth: AuthenticationMethod,
     target_addr: Option<TargetAddr>,
+    original_target_addr: Option<TargetAddr>,
     cmd: Option<Socks5Command>,
     /// Socket address which will be used in the reply message.
     reply_ip: Option<IpAddr>,
@@ -206,6 +207,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Socks5Socket<T> {
             config,
             auth: AuthenticationMethod::None,
             target_addr: None,
+            original_target_addr: None,
             cmd: None,
             reply_ip: None,
         }
@@ -508,6 +510,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Socks5Socket<T> {
                 ReplyError::AddressTypeNotSupported
             })?;
 
+        self.original_target_addr = Some(target_addr.clone());
         self.target_addr = Some(target_addr);
 
         debug!("Request target is {}", self.target_addr.as_ref().unwrap());
@@ -626,6 +629,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Socks5Socket<T> {
 
     pub fn target_addr(&self) -> Option<&TargetAddr> {
         self.target_addr.as_ref()
+    }
+
+    pub fn original_target_addr(&self) -> Option<&TargetAddr> {
+        self.original_target_addr.as_ref()
     }
 
     pub fn auth(&self) -> &AuthenticationMethod {
